@@ -1,6 +1,9 @@
 # Raw dataset — too large for git (transactions_data.csv ~1.25GB, train_fraud_labels.json ~159MB)
 Financial Transactions Dataset/
 
+# Course lecture material — copyrighted, repo is public
+Course content/
+
 # Generated dashboard data
 dashboard_data/*
 !dashboard_data/.gitkeep
