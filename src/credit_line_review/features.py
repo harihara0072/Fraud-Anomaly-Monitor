@@ -1,4 +1,6 @@
+import numpy as np
 import pandas as pd
+from sklearn.model_selection import GroupShuffleSplit
 
 
 def filter_credit_cards(cards: pd.DataFrame) -> pd.DataFrame:
@@ -52,3 +54,48 @@ def aggregate_card_behavior(transactions: pd.DataFrame, reference_date: str) -> 
 
     behavior = behavior.merge(online_share, on="card_id").merge(error_rate, on="card_id")
     return behavior.drop(columns=["std_amount", "last_txn_date", "first_txn_date"])
+
+
+def build_modeling_table(
+    cards: pd.DataFrame, users: pd.DataFrame, behavior: pd.DataFrame, reference_date: str
+) -> pd.DataFrame:
+    """Join filtered credit cards + users + behavioral features into one row-per-card modeling table."""
+    credit_cards = filter_credit_cards(cards)
+    ref = pd.Timestamp(reference_date)
+    tenure_months = (
+        ref - pd.to_datetime(credit_cards["acct_open_date"], format="%m/%Y")
+    ).dt.days / 30.44
+    table = credit_cards.assign(tenure_months=tenure_months).merge(
+        users, left_on="client_id", right_on="id", suffixes=("_card", "_user")
+    )
+    table = table.merge(behavior, left_on="id_card", right_on="card_id", how="left").drop(columns=["card_id"])
+
+    # Beyond the course: log1p-transform skewed monetary columns. Financial
+    # quantities are realistically log-normal (confirmed in the Task 2 EDA
+    # skew check) - untransformed, they'd violate the linear model's
+    # roughly-normal-residuals assumption.
+    for col in ("yearly_income", "total_debt", "credit_limit"):
+        table[f"log_{col}"] = np.log1p(table[col].clip(lower=0))
+
+    # A small slice of Credit-card rows have credit_limit == 0 (confirmed in
+    # the Task 2 EDA - these are almost certainly closed/frozen accounts, not
+    # a real "what should their limit be" case). They stay in the table for
+    # reporting but get flagged here so the notebook can exclude them from
+    # the train/test split instead of letting them distort the regression.
+    table["is_zero_limit"] = table["credit_limit"] == 0
+
+    return pd.get_dummies(table, columns=["card_brand", "has_chip", "gender"], drop_first=True)
+
+
+def group_train_test_split(
+    df: pd.DataFrame, group_col: str = "client_id", test_size: float = 0.2, random_state: int = 42
+):
+    """Split df into train/test, keeping all rows for a given group_col value on the same side.
+
+    Beyond the course: standard train/test splitting assumes i.i.d. rows.
+    One client can own several cards here, so a plain random split would
+    leak client identity across train and test - GroupShuffleSplit avoids that.
+    """
+    splitter = GroupShuffleSplit(test_size=test_size, n_splits=1, random_state=random_state)
+    train_idx, test_idx = next(splitter.split(df, groups=df[group_col]))
+    return df.iloc[train_idx].reset_index(drop=True), df.iloc[test_idx].reset_index(drop=True)
