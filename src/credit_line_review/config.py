@@ -16,3 +16,5 @@ SCORED_TRANSACTIONS_PARQUET = DASHBOARD_DATA_DIR / "scored_transactions.parquet"
 # use the day after the last transaction as a fixed anchor so recency/tenure
 # features are reproducible across notebook re-runs.
 REFERENCE_DATE = "2019-11-01"
+
+SCORED_ACCOUNTS_PARQUET = DASHBOARD_DATA_DIR / "scored_accounts.parquet"
