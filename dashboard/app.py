@@ -37,7 +37,7 @@ def render_portfolio_overview(data: "pd.DataFrame | None") -> None:
     fig.add_shape(
         type="line", x0=0, y0=0, x1=modeled["credit_limit"].max(), y1=modeled["credit_limit"].max()
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def render_miscalibration_explorer(data: "pd.DataFrame | None") -> None:
