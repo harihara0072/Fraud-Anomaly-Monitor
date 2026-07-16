@@ -1,8 +1,8 @@
 # Machine-Lararning-UofT
 
-SCS 3253 Machine Learning term project — Fraud Anomaly Monitor.
+SCS 3253 Machine Learning term project — Credit Line Review Assistant.
 
-Full design: [`docs/fraud-anomaly-monitor-proposal.md`](docs/fraud-anomaly-monitor-proposal.md)
+Full design: [`docs/credit-line-review-assistant-proposal.md`](docs/credit-line-review-assistant-proposal.md)
 Assignment brief: `Course content/SCS 3253 Term Project Machine Learning.pdf`
 
 ## Setup
@@ -18,5 +18,5 @@ Place the dataset under `Financial Transactions Dataset/` (gitignored — see th
 ## Running things
 
 - Tests: `pytest`
-- Notebook: `jupyter notebook notebooks/01_fraud_anomaly_detection.ipynb`
-- Dashboard (optional, after the notebook exports `dashboard_data/scored_transactions.parquet`): `streamlit run dashboard/app.py`
+- Notebook: `jupyter notebook notebooks/01_credit_line_review.ipynb`
+- Dashboard (optional, after the notebook exports `dashboard_data/scored_accounts.parquet`): `streamlit run dashboard/app.py`
