@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import pandas as pd
 import streamlit as st
 
-from fraud_anomaly.config import SCORED_TRANSACTIONS_PARQUET
+from credit_line_review.config import SCORED_TRANSACTIONS_PARQUET
 
 st.set_page_config(page_title="Fraud Anomaly Monitor", layout="wide")
 

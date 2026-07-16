@@ -18,7 +18,7 @@ nb["cells"] = [
         "\n"
         "import pandas as pd\n"
         "\n"
-        "from fraud_anomaly.data import (\n"
+        "from credit_line_review.data import (\n"
         "    load_cards,\n"
         "    load_fraud_labels,\n"
         "    load_mcc_codes,\n"

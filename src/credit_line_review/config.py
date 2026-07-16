@@ -11,3 +11,8 @@ MCC_CODES_JSON = DATA_DIR / "mcc_codes.json"
 FRAUD_LABELS_JSON = DATA_DIR / "train_fraud_labels.json"
 
 SCORED_TRANSACTIONS_PARQUET = DASHBOARD_DATA_DIR / "scored_transactions.parquet"
+
+# transactions_data.csv spans 2010-01-01 to 2019-10-31 (confirmed via full-file scan);
+# use the day after the last transaction as a fixed anchor so recency/tenure
+# features are reproducible across notebook re-runs.
+REFERENCE_DATE = "2019-11-01"

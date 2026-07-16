@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from fraud_anomaly.config import (
+from credit_line_review.config import (
     CARDS_CSV,
     FRAUD_LABELS_JSON,
     MCC_CODES_JSON,
