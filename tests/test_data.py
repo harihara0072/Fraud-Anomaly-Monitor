@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from fraud_anomaly.data import (
+from credit_line_review.data import (
     load_cards,
     load_fraud_labels,
     load_mcc_codes,
