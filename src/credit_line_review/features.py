@@ -2,6 +2,35 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import GroupShuffleSplit
 
+# Columns that must never reach the model: identifiers/targets (leak the
+# answer or are meaningless as inputs), security fields (card_number, cvv,
+# expires, year_pin_last_changed - pure noise, not credit-risk signal), and
+# raw geographic coordinates (latitude/longitude used directly as a
+# credit-limit predictor is a fair-lending/redlining red flag, not a
+# legitimate feature). birth_year/birth_month/retirement_age are dropped as
+# redundant with current_age rather than engineered into a real feature.
+NON_FEATURE_COLUMNS = frozenset({
+    "id_card", "id_user", "client_id", "credit_limit", "log_credit_limit", "is_zero_limit",
+    "card_number", "cvv", "expires", "year_pin_last_changed", "card_on_dark_web",
+    "latitude", "longitude", "birth_year", "birth_month", "retirement_age",
+    "acct_open_date", "card_type", "address",
+})
+
+
+def select_feature_columns(table: pd.DataFrame) -> list:
+    """Return the modeling table's numeric/bool columns that are safe model inputs.
+
+    Replaces an implicit "any numeric/bool column not in a short exclusion
+    list" selection with an explicit allowlist-by-exclusion, so identifier,
+    security, and geographic columns can't silently reappear as features
+    just because a future column addition happens to be numeric.
+    """
+    return [
+        c for c in table.columns
+        if c not in NON_FEATURE_COLUMNS
+        and (pd.api.types.is_numeric_dtype(table[c]) or pd.api.types.is_bool_dtype(table[c]))
+    ]
+
 
 def filter_credit_cards(cards: pd.DataFrame) -> pd.DataFrame:
     """Keep only card_type == 'Credit' rows.

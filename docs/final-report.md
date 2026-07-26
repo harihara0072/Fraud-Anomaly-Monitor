@@ -12,7 +12,7 @@ Credit card issuers typically set a customer's credit limit once, at account ope
 
 We built a "credit line review" model: for each existing credit-card account, it recommends a limit based on behavior and demographics, compares that recommendation to the customer's actual limit, and flags accounts that look **underlimited** (likely under-served, a churn and revenue risk) or **overlimited** (a risk exposure that may not be priced correctly). We trained and compared three model types — a naive baseline, Linear Regression, and Random Forest — plus an unsupervised KMeans clustering model to segment customers into behavioral personas.
 
-**Bottom line:** the behavioral-plus-demographic Random Forest model explains real variance in credit limits that a linear model and a "just guess the average" baseline both miss (R² of 0.36 vs. -0.07 for the baseline). This supports our hypothesis that spending behavior carries information about the "right" credit limit beyond what credit score and income alone capture. The model also surfaced a genuine data-quality finding — 26 nominally "Credit" accounts with a $0 limit, almost certainly closed or frozen accounts — which we chose to flag and report separately rather than silently drop or let corrupt the analysis.
+**Bottom line:** once we corrected a feature-leakage issue we caught during our own review (Section 2.2), both Linear Regression and Random Forest clear the "just guess the average" baseline decisively (R² of roughly 0.40 each on the held-out test set, versus -0.07 for the baseline). This supports our hypothesis that spending and demographic behavior carries information about the "right" credit limit beyond what a naive average captures. Repeated cross-validation shows Random Forest is the more *reliable* of the two — consistently around R² 0.44 across resampled folds, while Linear Regression swings more widely (R² 0.32 on average, with much higher fold-to-fold variance) — so Random Forest remains our recommended model even though the single-split comparison alone would have suggested the two were roughly tied. The model also surfaced a genuine data-quality finding — 26 nominally "Credit" accounts with a $0 limit, almost certainly closed or frozen accounts — which we chose to flag and report separately rather than silently drop or let corrupt the analysis.
 
 ---
 
@@ -68,6 +68,7 @@ The raw files required several corrections before they were usable:
 - **A subset of nominally "Credit" accounts had a $0 credit limit.** This was discovered indirectly: after log-transforming the credit-limit column (a standard step for skewed financial data, described below), the transformed column's skew came out strongly *negative* (-5.52) — the opposite of what a correctly-applied log transform of right-skewed data should produce. Investigating this anomaly rather than accepting the number at face value led us to the cause: 26 of the 2,057 credit-card rows (1.3%) have a listed limit of exactly $0, almost certainly closed or frozen accounts. We chose to **flag these rows rather than silently drop them**: they are excluded from model training and from performance metrics (a $0-limit account is not a genuine "what should this limit be" case), but they are still scored and reported as their own segment in the final output, since a risk team would want visibility into how many closed/frozen accounts exist in the portfolio, and dropping them outright would have hidden that.
 - **Dates required parsing**, since the account-open date is stored as month/year text and transaction dates as strings; both needed conversion to real date types to compute account tenure and transaction recency.
 - **One client can own multiple cards.** This matters for how we later split data into training and test sets (Section 2.4).
+- **Identifier and security fields needed explicit exclusion, and an initial version of our pipeline missed this.** The raw tables include a card's number, its CVV, and the year a customer's PIN was last changed, plus raw latitude/longitude coordinates. During our own review of the model's explanations (Section 4.3) we caught that these had silently leaked into the feature set — the code was selecting "any numeric column not explicitly named," rather than explicitly listing which columns are legitimate inputs, so newly-added numeric columns kept slipping through. We corrected this to an explicit exclusion list covering all eight fields (card number, CVV, PIN-change year, latitude, longitude, birth year, birth month, retirement age), dropping the feature count from 32 to 24. Raw geographic coordinates are worth calling out specifically: using a customer's exact latitude/longitude as a direct input to a credit-limit model is a recognized fair-lending risk (a geographic proxy for factors a lender isn't supposed to use), not just a data-hygiene issue, so its removal matters beyond tidiness.
 
 ### 2.3 Feature engineering
 
@@ -108,7 +109,7 @@ The simplest possible model predicts the same value — the training set's avera
 
 ### 3.2 Linear Regression — the interpretable option
 
-We chose Linear Regression as our first real model because of **interpretability**. In a real lending context, there is a genuine expectation that an issuer can explain, in plain terms, why a customer's account was or was not flagged for a limit change ("adverse action" reasoning). A linear model's coefficients can be read directly — "each additional point of spend volatility is associated with this much change in recommended limit" — in a way that a more complex model cannot easily be. We used a standard (unregularized) linear regression rather than a penalized variant like Ridge or Lasso, because with roughly 1,600 training rows and 32 features (after one-hot encoding), our feature set was not in a range where overfitting or unstable coefficients from correlated features was a demonstrated practical problem — adding regularization would have been complexity without a clear need.
+We chose Linear Regression as our first real model because of **interpretability**. In a real lending context, there is a genuine expectation that an issuer can explain, in plain terms, why a customer's account was or was not flagged for a limit change ("adverse action" reasoning). A linear model's coefficients can be read directly — "each additional point of spend volatility is associated with this much change in recommended limit" — in a way that a more complex model cannot easily be. We used a standard (unregularized) linear regression rather than a penalized variant like Ridge or Lasso, because with roughly 1,600 training rows and 24 features (after one-hot encoding, and after removing the leaked columns described in Section 2.2), our feature set was not in a range where overfitting or unstable coefficients from correlated features was a demonstrated practical problem — adding regularization would have been complexity without a clear need. As Section 4 shows, this turned out to matter: Linear Regression performs respectably once the noisy leaked columns are gone, but it is noticeably less *stable* across resamples than Random Forest, which is a separate concern from raw accuracy and part of why we still recommend the tree-based model.
 
 ### 3.3 Random Forest — the non-linear option
 
@@ -118,7 +119,7 @@ We expected the true relationship between behavior and the "right" credit limit 
 
 The course objective calls for comparing meaningfully different modeling approaches, not several regressions dressed differently. KMeans clustering groups accounts into behavioral "personas" using no target variable at all — a structurally different kind of task from regression. Because KMeans measures distance between accounts, and our features are on wildly different scales (dollars, counts, percentages), we standardized every feature (rescaled to have a mean of 0 and standard deviation of 1) before clustering. We chose four clusters as a reasonable starting segmentation size for a portfolio view.
 
-**We report honestly that this did not produce cleanly separated personas.** The clustering's silhouette score — a standard measure of how well-separated clusters are, ranging from -1 (poor) to +1 (excellent) — came out at only 0.089 on our data. This is low, meaning the four groups overlap substantially in behavior rather than forming distinct customer types. Rather than treating this as a failure to hide, we treat it as a genuine finding: the accounts in this dataset do not appear to fall into sharply distinct behavioral personas, which is itself informative about the population being modeled.
+**We report honestly that this did not produce cleanly separated personas.** The clustering's silhouette score — a standard measure of how well-separated clusters are, ranging from -1 (poor) to +1 (excellent) — came out at only 0.126 on our (feature-leakage-corrected) data. This is low, meaning the four groups overlap substantially in behavior rather than forming distinct customer types. Rather than treating this as a failure to hide, we treat it as a genuine finding: the accounts in this dataset do not appear to fall into sharply distinct behavioral personas, which is itself informative about the population being modeled.
 
 ### 3.5 PCA — for visualization only
 
@@ -135,6 +136,9 @@ A few techniques were necessary for a credible analysis but go beyond what a typ
 | Customer-aware (grouped) train/test split | Prevents one customer's multiple cards from leaking across the split |
 | Aggregating transactions into per-card behavioral features | A technique borrowed from marketing analytics (recency/frequency/monetary analysis), needed to turn millions of transaction rows into one row per account |
 | SHAP feature importance | Explained in Section 4.3 — this is the project's main novelty contribution |
+| Permutation importance | A second, model-agnostic importance measure used to cross-check SHAP's ranking (Section 4.3) — SHAP's attribution is specific to how the Random Forest happens to be built internally, so an independent method that agrees with it is stronger evidence than either alone |
+| Grouped k-fold cross-validation | A single train/test split gives one point estimate; repeating the group-aware split five times and reporting a mean and standard deviation (Section 4.2) shows whether a model's apparent advantage holds up across different customers being held out, not just the specific split we happened to report |
+| Bootstrap confidence interval on R² | Resampling the held-out test set with replacement to build a confidence interval (Section 4.2), rather than trusting a single R² number computed on one fixed set of accounts |
 
 ---
 
@@ -151,36 +155,52 @@ This project combines a regression task (predicting a dollar amount) with an uns
 
 ### 4.2 Results
 
+**Single held-out split** (415 accounts, using the corrected 24-feature set from Section 2.2):
+
 | Model | R² | MAE | RMSE | MAPE |
 |---|---|---|---|---|
 | Baseline (predict the average) | -0.071 | $4,051 | $5,773 | 47.4% |
-| Linear Regression | -0.082 | $4,071 | $5,803 | 47.6% |
-| **Random Forest** | **0.364** | **$3,036** | **$4,448** | **35.1%** |
+| Linear Regression | 0.405 | $2,966 | $4,301 | 35.5% |
+| **Random Forest** | **0.402** | **$2,985** | **$4,314** | **35.1%** |
 
-**Reading this honestly:** Linear Regression actually performs slightly *worse* than the naive baseline (both have negative R²). This is a real result, not an error in our code — it means that a straight-line relationship between the available features and credit limit does not capture more signal than simply guessing the portfolio average. The pattern in this data is genuinely non-linear. Random Forest, by contrast, clears the baseline decisively — an R² of 0.36 versus -0.07, and roughly 25% lower average dollar error than the baseline or the linear model. This is the concrete evidence for our hypothesis in Section 1: behavioral and demographic features **do** explain real variance in credit limits, but only a model capable of capturing non-linear structure can access that signal. We did not build a separate ensemble that combines Linear Regression and Random Forest predictions together (e.g., a voting or stacking ensemble); Random Forest is itself an ensemble of individual decision trees, and given how decisively it outperformed the single alternatives, we prioritized explaining and validating that result over adding further model complexity — we note this as a natural next step in Section 5.
+**Reading this honestly:** this is a materially different picture than an earlier version of our pipeline produced, and the difference is instructive. Before we caught and fixed the feature-leakage issue in Section 2.2, Linear Regression appeared to perform *worse* than the naive baseline. Once the leaked identifier, security, and geographic columns were removed, Linear Regression's R² on this split jumped to 0.405 — statistically indistinguishable from Random Forest's 0.402 on this particular split. The earlier "the relationship must be non-linear" conclusion was, at least in part, an artifact of noise columns (a random card number, a CVV code) distorting the linear fit, not solid evidence about the true shape of the relationship. Both models now clear the baseline decisively — roughly 25-27% lower average dollar error than simply guessing the portfolio average.
 
-To go beyond a single summary number, we also plotted predicted values against actual values (checking how closely points track a straight diagonal line) and the distribution of prediction errors, for the winning Random Forest model, to confirm its errors are not systematically biased in one direction rather than trusting R² alone.
+**A single split isn't the full story, though.** Because Linear Regression and Random Forest are now close on this one split, we checked whether that holds up more broadly using grouped 5-fold cross-validation (still grouped by customer, so no client's cards ever span a fold's train and test sides):
+
+| Model | R² (mean ± std) | MAE (mean ± std) | RMSE (mean ± std) |
+|---|---|---|---|
+| Baseline | -0.069 ± 0.031 | $4,497 ± $418 | $6,901 ± $1,180 |
+| Linear Regression | 0.316 ± 0.348 | $3,235 ± $228 | $5,450 ± $1,914 |
+| **Random Forest** | **0.443 ± 0.081** | **$3,227 ± $78** | **$4,925 ± $545** |
+
+This is the more important comparison. Random Forest's average R² across folds (0.44) is actually *higher* than on the single reported split, and its spread across folds is narrow (± 0.08) — it performs consistently regardless of which customers happen to be held out. Linear Regression's average R² (0.32) is lower than its single-split result, and its spread is far wider (± 0.35) — meaning its accuracy depends heavily on which specific accounts land in the test fold, sometimes performing close to Random Forest and sometimes much worse. **This is why we recommend Random Forest as the production model despite the two looking similar on one split**: reliability across resamples, not just a single accuracy number, is what a deployed model needs. (MAPE is omitted from this table on purpose — it swings unrealistically in some folds, 43-80%, because a small number of low-limit accounts produce outsized percentage errors; MAE and RMSE are the more trustworthy metrics here, a known limitation of MAPE we want to state plainly rather than paper over.)
+
+**Is Random Forest's advantage a fluke of one test set?** Bootstrapping the held-out split (1,000 resamples with replacement) gives a 95% confidence interval of **[0.29, 0.50]** for Random Forest's R², entirely above zero and well clear of the baseline's confidence interval of **[-0.12, -0.03]**, which stays entirely below zero. The two intervals don't overlap at all, which is strong evidence the gap between "a real model" and "just guessing the average" is not a coincidence of which accounts happened to be in our test set.
+
+To go beyond summary numbers, we also plotted predicted values against actual values (checking how closely points track a straight diagonal line) and the distribution of prediction errors, for the Random Forest model, to confirm its errors are not systematically biased in one direction.
 
 ### 4.3 Explaining individual predictions (SHAP)
 
 A single accuracy number does not answer the question a real credit-risk reviewer needs answered: "why did the model recommend *this* limit for *this* customer?" We used **SHAP (SHapley Additive exPlanations)**, a technique that attributes each individual prediction to the specific input features that pushed it up or down, and how much. This goes beyond a model's built-in "feature importance" ranking by providing per-account, per-feature explanations — directly relevant to the real regulatory expectation that a lender can explain an adverse credit decision to a customer. This is the strongest novelty element of the project.
 
-Ranking features by their average influence across all held-out accounts, the top contributors were: per-capita income (by a wide margin), credit score, account tenure, number of cards issued, yearly income, and transaction frequency. This is broadly consistent with intuition — income and credit history dominate, with behavioral tenure and activity features contributing meaningfully behind them.
+Ranking features by their average influence across all held-out accounts, the top contributors were: **per-capita income, by a wide margin**, then credit score, account tenure, number of cards issued, transaction frequency, and number of credit cards held. This is broadly consistent with intuition — income and credit history dominate, with behavioral tenure and activity features contributing meaningfully behind them.
 
-**An honest caveat on this ranking:** two features that appeared in the top ten — a card's CVV number and the year a customer's PIN was last changed — are not meaningful credit-risk signals; they are account-administration artifacts that should have been excluded from the feature set entirely, and were not. We are reporting this rather than silently correcting it in the write-up, because it is a genuine finding about the current state of the pipeline: these two columns leaked into the model as numeric fields when they should have been filtered out alongside other identifier fields (card number, expiry date). Their SHAP contribution was small relative to income and credit score, so they do not materially change the top-line conclusion, but they should be explicitly excluded before this model is used for anything beyond this course project. We list this as the first item in our recommended next steps (Section 5).
+**Cross-checking SHAP with a second, independent method.** SHAP's attribution is specific to how the Random Forest happens to be built internally, so we also computed **permutation importance** — a model-agnostic measure of how much R² falls when a feature's values are randomly shuffled. It agrees with SHAP on the dominant feature (per-capita income drives the largest R² drop by far when shuffled) and largely agrees on the next tier (tenure, credit score, income), which is reassuring: two different methods pointing at the same features is stronger evidence than either alone that this ranking reflects something real about the model, not an artifact of one attribution technique.
+
+**A caveat we caught and fixed during this analysis, not before it:** an earlier version of the SHAP ranking included a card's CVV number and the year a customer's PIN was last changed in its top ten — neither is a meaningful credit-risk signal; both are account-administration artifacts that should never have reached the feature set. Investigating why led us to the broader feature-leakage issue described in Section 2.2 (the pipeline was implicitly including any numeric column, rather than an explicit allowlist). We corrected the underlying feature selection rather than just this symptom, re-ran the full pipeline, and the ranking above reflects the corrected model. We're describing the fix here rather than only in the data-preparation section because it's a good illustration of exactly the kind of check SHAP is useful for: an explainability tool that shows *why* a model made a prediction can also surface that the model is looking at something it shouldn't be, which a top-line accuracy metric alone would never reveal.
 
 ### 4.4 Evaluating the clustering and the flagging decision
 
-Clustering has no "correct answer" to check predictions against, so we relied on the silhouette score discussed in Section 3.4 (0.089 — a genuine limitation, not a strong segmentation) rather than a fabricated accuracy figure.
+Clustering has no "correct answer" to check predictions against, so we relied on the silhouette score discussed in Section 3.4 (0.126 on the corrected feature set, up slightly from 0.089 before the leakage fix, but still a genuine limitation rather than a strong segmentation) rather than a fabricated accuracy figure.
 
 The final flagging decision — whether an account is under-limited, over-limited, or in range — also has no ground-truth label in the data (there is no recorded "this account was truly miscalculated" field to check against). We instead evaluated it as a **business-plausibility check**: at our chosen threshold (1.5 times the standard deviation of prediction errors), the 441 scored accounts broke down as follows:
 
 | Flag | Count | Share |
 |---|---|---|
-| In range | 364 | 82.5% |
+| In range | 363 | 82.3% |
 | Overlimited | 38 | 8.6% |
 | Closed / zero-limit account | 26 | 5.9% |
-| Underlimited | 13 | 2.9% |
+| Underlimited | 14 | 3.2% |
 
 Roughly 12% of active accounts flagged for review is a plausible-sized queue for a risk-review team to work through manually — neither an unusably large fraction of the portfolio nor a trivially small one — which is the sanity check available in place of a formal precision/recall metric.
 
@@ -190,21 +210,23 @@ Roughly 12% of active accounts flagged for review is a plausible-sized queue for
 
 ### 5.1 Did we prove or disprove the hypothesis?
 
-Our hypothesis was that behavioral spending signal explains credit-limit variance beyond credit score and income alone. The evidence supports it, with an important qualifier: **a linear combination** of behavioral and demographic features adds no value over guessing the portfolio average (Linear Regression underperformed the baseline). It is specifically the *non-linear* Random Forest model that unlocks real predictive value (R² = 0.36 vs. -0.07 for the baseline), a roughly 25% reduction in average dollar error versus both simpler alternatives. We conclude the hypothesis is supported, but only when paired with a model flexible enough to capture non-linear interactions between behavior and demographics — a conclusion that itself informs how any future version of this model should be built (Section 5.3).
+Our hypothesis was that behavioral spending signal explains credit-limit variance beyond credit score and income alone. The evidence supports it clearly: both Linear Regression and Random Forest reach R² ≈ 0.40 on held-out accounts, decisively beating the -0.07 baseline, a roughly 25-27% reduction in average dollar error. We want to be transparent that this conclusion firmed up over the course of the analysis, not before it: an earlier version of our pipeline had a feature-leakage bug (Section 2.2) that made Linear Regression look like it added no value at all, which would have supported a narrower, less accurate conclusion ("only a non-linear model captures this signal"). Catching and fixing that bug changed the finding materially. Repeated cross-validation adds an important nuance the single-split comparison misses: Random Forest is the *more reliable* of the two models (R² 0.44 ± 0.08 across folds) while Linear Regression's accuracy swings widely depending on which customers are held out (R² 0.32 ± 0.35). We conclude the hypothesis is supported, and specifically recommend Random Forest for deployment on the basis of that stability, not just its single-split accuracy.
 
 ### 5.2 What we learned about the data
 
 - Real financial data is genuinely messy in specific, checkable ways: currency stored as text, a categorical field ("card type") that doesn't cleanly gate a numeric field the way its label implies, and a small but real subset of "closed" accounts hiding inside what looked like a clean numeric column until we investigated an anomalous statistic rather than accepting it.
-- Behavioral spending patterns in this dataset do not sort customers into a small number of sharply distinct "personas" — the low silhouette score is a legitimate finding about the population, not a modeling failure to be explained away.
-- Interpretability and predictive power traded off directly in this project: the model we could explain most simply (Linear Regression) was also the one that added the least value, while the model that performed best (Random Forest) required an additional explainability layer (SHAP) to make its reasoning legible to a non-technical reviewer.
+- **A model's own explainability output can catch bugs a top-line metric would miss.** We only found the feature-leakage issue (Section 2.2) because we looked closely at *why* the model was making its predictions (SHAP), not just *how accurate* it was. A CVV code or a PIN-change year showing up as an influential feature was a signal something upstream was wrong, well before it became visible as a dip in any accuracy number.
+- Behavioral spending patterns in this dataset do not sort customers into a small number of sharply distinct "personas" — the low silhouette score (0.126) is a legitimate finding about the population, not a modeling failure to be explained away.
+- Two independent methods (SHAP and permutation importance) agreeing that per-capita income, credit score, and account tenure dominate the prediction gives us more confidence in that ranking than either method would on its own.
+- A single train/test split can be actively misleading, not just imprecise: on one split, Linear Regression and Random Forest looked essentially tied; five-fold cross-validation revealed that tie masks a real difference in reliability between the two models.
 
 ### 5.3 What we would do next
 
-1. **Fix the feature-leakage issue identified in Section 4.3.** CVV and PIN-change-year fields should be explicitly excluded from the model's inputs before this analysis is used for anything beyond this course project; this is a data-hygiene fix, not a modeling change, and should be the first thing addressed.
-2. **Try gradient-boosted trees** (e.g., XGBoost or LightGBM) as a stronger non-linear alternative to Random Forest, and consider a stacking ensemble that blends Linear Regression's interpretable signal with the tree-based model's non-linear power.
-3. **Validate with grouped cross-validation** (multiple train/test splits, not just one) to report a mean and confidence interval for R²/MAE rather than a single point estimate, which would make the "Random Forest beats baseline" conclusion more statistically defensible.
-4. **Bring in additional behavioral signal we deliberately left out of scope** for this project — merchant-category *names* (rather than just counting how many distinct categories a customer touches) and prior fraud-incident history — which might sharpen the persona segmentation in Section 3.4.
-5. **Test the model's stability over time**, since the transaction data here spans nearly a decade (2010–2019); a production version of this model would need to be revalidated periodically as spending norms shift.
+1. **Try gradient-boosted trees** (e.g., XGBoost or LightGBM) as a potentially even stronger, more stable non-linear alternative to Random Forest, and consider a stacking ensemble that blends Linear Regression's interpretable signal with a tree-based model's predictions.
+2. **Investigate why Linear Regression's cross-validation variance is so high** (± 0.35 in R²) — this could mean a small number of unusual customers disproportionately affect the linear fit, which would itself be a useful finding for how the portfolio is segmented.
+3. **Bring in additional behavioral signal we deliberately left out of scope** for this project — merchant-category *names* (rather than just counting how many distinct categories a customer touches) and prior fraud-incident history — which might sharpen the persona segmentation in Section 3.4.
+4. **Test the model's stability over time**, since the transaction data here spans nearly a decade (2010–2019); a production version of this model would need to be revalidated periodically as spending norms shift.
+5. **Extend fair-lending review beyond the geographic-coordinate fix already made** (Section 2.2) — audit remaining demographic features (e.g., gender, age) for disparate impact before this model informs any real credit decision.
 
 ---
 
@@ -231,6 +253,24 @@ src/credit_line_review/
 ├── evaluation.py    # Regression metrics, residuals, SHAP importance
 ├── clustering.py    # KMeans personas, PCA projection
 └── export.py         # Scored-accounts builder and Parquet export
+```
+
+Sample: explicit feature-column selection, replacing an earlier implicit "any numeric column" selection that let identifier/security/geographic fields leak in (`features.py`)
+
+```python
+NON_FEATURE_COLUMNS = frozenset({
+    "id_card", "id_user", "client_id", "credit_limit", "log_credit_limit", "is_zero_limit",
+    "card_number", "cvv", "expires", "year_pin_last_changed", "card_on_dark_web",
+    "latitude", "longitude", "birth_year", "birth_month", "retirement_age",
+    "acct_open_date", "card_type", "address",
+})
+
+def select_feature_columns(table):
+    return [
+        c for c in table.columns
+        if c not in NON_FEATURE_COLUMNS
+        and (pd.api.types.is_numeric_dtype(table[c]) or pd.api.types.is_bool_dtype(table[c]))
+    ]
 ```
 
 Sample: fitting the Random Forest model (`models.py`)

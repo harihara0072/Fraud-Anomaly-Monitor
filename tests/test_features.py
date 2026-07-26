@@ -7,6 +7,7 @@ from credit_line_review.features import (
     build_modeling_table,
     filter_credit_cards,
     group_train_test_split,
+    select_feature_columns,
 )
 
 
@@ -110,6 +111,44 @@ def test_build_modeling_table_flags_zero_limit_rows_without_dropping_them():
     nonzero_row = table.loc[table["id_card"] == 2].iloc[0]
     assert zero_row["is_zero_limit"] == True
     assert nonzero_row["is_zero_limit"] == False
+
+
+def test_select_feature_columns_excludes_identifiers_and_leaked_pii():
+    table = pd.DataFrame({
+        "id_card": [1],
+        "client_id": [10],
+        "credit_limit": [5000.0],
+        "log_credit_limit": [8.5],
+        "is_zero_limit": [False],
+        "card_number": [4111111111111111],
+        "cvv": [123],
+        "expires": ["12/2025"],
+        "year_pin_last_changed": [2019],
+        "latitude": [43.7],
+        "longitude": [-79.4],
+        "birth_year": [1985],
+        "birth_month": [6],
+        "retirement_age": [65],
+        "credit_score": [700],
+        "current_age": [40],
+        "num_credit_cards": [3],
+        "txn_count": [12],
+        "is_online_heavy": [True],
+    })
+    selected = select_feature_columns(table)
+
+    assert "credit_score" in selected
+    assert "current_age" in selected
+    assert "num_credit_cards" in selected
+    assert "txn_count" in selected
+    assert "is_online_heavy" in selected
+
+    for leaked in (
+        "id_card", "client_id", "credit_limit", "log_credit_limit", "is_zero_limit",
+        "card_number", "cvv", "expires", "year_pin_last_changed",
+        "latitude", "longitude", "birth_year", "birth_month", "retirement_age",
+    ):
+        assert leaked not in selected
 
 
 def test_group_train_test_split_keeps_client_groups_together():
